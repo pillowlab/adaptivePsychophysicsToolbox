@@ -34,7 +34,7 @@ fprintf('slope:     a=%.1f\n\n', truemodel1.a);
 xx = 2.5*(-1:0.1:1)'; % 1D stimulus grid
 
 % Compute true psychometric function at stimulus values
-[~,~,probTrue] = getTrueModel_byParamStruct(truemodel1,xx);
+[~,dims,probTrue] = getTrueModel_byParamStruct(truemodel1,xx);
 
 % Batch of stimuli to be presented
 Nrep = 20; % number of repeated observations per stimulus
@@ -56,43 +56,92 @@ for ix = 1:size(xx,1)
 end
 
 
-% === Set options for the program ================
 
-% Initialize
-mynums = [];
-myopts = [];
+% === Specify algorithms to use =====================
 
-% Choose inference method through nsamples
-mynums.nsamples = 0; % either 0 or a positive integer
-% If nsamples > 0, it specifies the # samples in each MCMC chain;
-% if nsamples == 0, it means a MAP estimate.
+% Select inference method (either MAP or MCMC)
+nsamples = 500; % MCMC chain length
+doingMAP = (nsamples==0); % if 0, we make MAP estimate;
+doingMCMC = (nsamples>0); % if >0, we run MCMC sampling.
 
 % Set prior hyperpameters
-mynums.hyperprs = ... 
+hyperprs = ... 
     struct('wgtmean',0,'wgtsigma',3,... % gaussian prior for weights
     'lpsLB',log(0.001),'lpsUB',0, ... % range constraints for lapses
     'lpsInit',-5 ... % starting point for lapse parameters
     );
 
-% Set switches for running modes
-myopts.allfit = true; % if true, program simply does parameter estimate
-myopts.withLapse = false; % if false: inference algorithm is unaware of lapses
+% Set whether to include lapses in the model being inferred
+withLapse = 0; % 1: use lapse-aware model, 0: ignore lapse
 
-% Additional options
-myopts.reportMoreValues = true; % report all sampled parameters from MCMC
-myopts.talkative = 1; % 0:silent, 1:minimal messages, 2:more messages
+% Unpack parameter dimensions
+ydim = dims.y;
+gdim = dims.g;
+if(withLapse==1)
+    udim = ydim+1; % lapse parameter length (equal to # choices)
+else
+    udim = 0; % no lapse parameter
+end
 
-% === Run fitting code to infer the PF from data =========
+% a human-readable string to remind what we do in this simulation
+inftagList = {'Laplace',['MCMC',num2str(nsamples)]};
+inftag = inftagList{doingMCMC+1}; % if not MCMC, then MAP
+algtag = 'infomax';
+withLapseTagList = {'lapse-unaware','lapse-aware'};
+lpstag = withLapseTagList{withLapse+1};
+runTag = [algtag,'-',inftag];
 
-[fitResult,~,~] = prog_infomax_MNLwL(dat1,mynums,myopts);
-probEst = fitResult.prob; % estimated choice probability
+
+
+% === Pack options for sequential experiment =======
+
+opts = [];
+
+% parameter initialization, bounds and step sizes
+K0 = ydim*gdim;
+prsInit = [(hyperprs.wgtmean)*ones(K0,1); ...
+    (hyperprs.lpsInit)*ones(udim,1)]; % initial value for parameters
+opts.prs0 = prsInit(:)';
+opts.prsInit = prsInit(:)'; % duplicate for re-initialization
+opts.prsLB = [-Inf*ones(K0,1); (hyperprs.lpsLB)*ones(udim,1)]'; % lower bound
+opts.prsUB = [Inf*ones(K0,1); (hyperprs.lpsUB)*ones(udim,1)]'; % upper bound
+opts.steps = ones(1,numel(prsInit)); % initial step sizes
+
+% numbers for MCMC samplings
+opts.nsamples = nsamples; % length of chain
+opts.nburn = 500; % # samples for "burn-in"
+opts.nburnInit = 500; % duplicate for re-initialization
+opts.nburnAdd = 50; % burn-in for additional runs
+
+% more options
+opts.prior = hyperprs;
+opts.reportMoreValues = false;
+opts.talkative = 1; % display level
+
+
+% === Run algorithm to infer the PF from data =======
+
+if(doingMAP)
+    [probEst,theta,~,~,~] = fun_BASS_MAP(xx,dat1,dims,opts);
+elseif(doingMCMC)
+    numFullRuns = 5; % iterate a few times to adjust step sizes
+    for nfr = 1:numFullRuns
+        [probEst,theta,~,~,chainLmat,~] = ...
+            fun_BASS_MCMC(xx,dat1,dims,opts);
+        % update sampling parameters
+        opts.prs0 = theta;
+        opts.steps = chainLmat;
+    end
+end
+paramEst1 = paramVec2Struct(theta,dims); % get a param struct
+
 
 % Display estimated parameter values
-paramEst1 = fitResult.param;
 fprintf('\nEstimated model 1:\n');
 fprintf('-------------------\n');
 fprintf(' bias:     b=%.1f\n', paramEst1.b);
 fprintf('slope:     a=%.1f\n\n', paramEst1.a);
+
 
 % === plot ==========================================
 
@@ -172,16 +221,24 @@ for ix = 1:size(xx,1)
 end
 
 
-% === Run program to infer the PF from data =========
+% === Run algorithm to infer the PF from data =======
 
-% Run the program, using the same options as before (model 1).
-[fitResult,~,~] = prog_infomax_MNLwL(dat2,mynums,myopts);
-
-% Estimated choice probability (for the two non-omission choices only!)
-probEst = fitResult.prob; 
+% Run inference, using the same options as before (as in model 1):
+if(doingMAP)
+    [probEst,theta,~,~,~] = fun_BASS_MAP(xx,dat2,dims,opts);
+elseif(doingMCMC)
+    numFullRuns = 5; % iterate a few times to adjust step sizes
+    for nfr = 1:numFullRuns
+        [probEst,theta,~,~,chainLmat,~] = ...
+            fun_BASS_MCMC(xx,dat2,dims,opts);
+        % update sampling parameters
+        opts.prs0 = theta;
+        opts.steps = chainLmat;
+    end
+end
+paramEst2 = paramVec2Struct(theta,dims); % get a param struct
 
 % Display estimated parameter values
-paramEst2 = fitResult.param;
 fprintf('\nEstimated model 2:\n');
 fprintf('(with non-omission trials only)\n');
 fprintf('-------------------------------\n');
@@ -254,17 +311,27 @@ for ix = 1:size(xx,1)
 end
 
 
-% === Run program to infer the PF from data =========
+% === Run algorithm to infer the PF from data =======
 
-% Run the program, using the same options as before; 
+% Run inference using the same options as before; 
 % in particular, the algorithm is still not aware of lapses
-% (myopts.withLapse is set to false)
+% (withLapse is set to false)
 
-[fitResult,~,~] = prog_infomax_MNLwL(dat3,mynums,myopts);
-probEst = fitResult.prob; % estimated choice probability
+if(doingMAP)
+    [probEst,theta,~,~,~] = fun_BASS_MAP(xx,dat3,dims,opts);
+elseif(doingMCMC)
+    numFullRuns = 5; % iterate a few times to adjust step sizes
+    for nfr = 1:numFullRuns
+        [probEst,theta,~,~,chainLmat,~] = ...
+            fun_BASS_MCMC(xx,dat3,dims,opts);
+        % update sampling parameters
+        opts.prs0 = theta;
+        opts.steps = chainLmat;
+    end
+end
+paramEst3 = paramVec2Struct(theta,dims); % get a param struct
 
 % Display estimated parameter values
-paramEst3 = fitResult.param;
 fprintf('\nEstimated model 3:\n');
 fprintf('(using lapse-UNAWARE model)\n');
 fprintf('----------------------------\n');
@@ -297,15 +364,40 @@ set(findall(gca,'-property','linewidth'),'linewidth',2)
 set(gca,'box','off','linewidth',1)
 
 
-% === Now infer with the lapse-aware model ==========
+% === Lastly, infer with the lapse-aware model =======
 
-myopts.withLapse = 1; % use the lapse-aware model
+withLapse = 1; % use the lapse-aware model
 
-[fitResult,~,~] = prog_infomax_MNLwL(dat3,mynums,myopts);
-probEst = fitResult.prob; % estimated choice probability
+% re-set parameter initialization, bounds and step sizes
+if(withLapse==1)
+    udim = ydim+1; % lapse parameter length (equal to # choices)
+else
+    udim = 0; % no lapse parameter
+end
+prsInit = [(hyperprs.wgtmean)*ones(K0,1); ...
+    (hyperprs.lpsInit)*ones(udim,1)]; % initial value for parameters
+opts.prs0 = prsInit(:)';
+opts.prsInit = prsInit(:)'; % duplicate for re-initialization
+opts.prsLB = [-Inf*ones(K0,1); (hyperprs.lpsLB)*ones(udim,1)]'; % lower bound
+opts.prsUB = [Inf*ones(K0,1); (hyperprs.lpsUB)*ones(udim,1)]'; % upper bound
+opts.steps = ones(1,numel(prsInit)); % initial step sizes
+
+% run inference
+if(doingMAP)
+    [probEst,theta,~,~,~] = fun_BASS_MAP(xx,dat3,dims,opts);
+elseif(doingMCMC)
+    numFullRuns = 5; % iterate a few times to adjust step sizes
+    for nfr = 1:numFullRuns
+        [probEst,theta,~,~,chainLmat,~] = ...
+            fun_BASS_MCMC(xx,dat3,dims,opts);
+        % update sampling parameters
+        opts.prs0 = theta;
+        opts.steps = chainLmat;
+    end
+end
+paramEst3L = paramVec2Struct(theta,dims); % get a param struct
 
 % Display estimated parameter values
-paramEst3L = fitResult.param;
 lapseEst = sum(getLapseProb(paramEst3L.u)); % u is auxiliary lapse parameter
 fprintf('\nEstimated model 3:\n');
 fprintf('(using lapse-AWARE model)\n');
