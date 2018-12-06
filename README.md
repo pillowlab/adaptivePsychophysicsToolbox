@@ -7,7 +7,9 @@ On each trial, the program takes a newly "observed" stimulus-response pair, infe
 
 ### Reference:
 
-- Bak JH & Pillow JW (2018). Adaptive stimulus selection for multi-alternative psychometric functions with lapses. [(bioRxiv)](https://doi.org/10.1101/260976)
+- Bak JH & Pillow JW (2018). Adaptive stimulus selection for multi-alternative psychometric functions with lapses. _Journal of Vision_. 
+[(link)](https://jov.arvojournals.org/article.aspx?articleid=2713945)
+<!---[(bioRxiv)](https://doi.org/10.1101/260976)--->
 
 
 
